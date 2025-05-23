@@ -3,6 +3,7 @@ import os
 from enum import Enum
 from datetime import datetime
 import json
+import logging
 
 import pandas as pd
 from dotenv import load_dotenv
@@ -38,6 +39,7 @@ class TIME_UNITS(Enum):
 
 class Connector:
     _session: requests.Session = None
+    _token: str = None
     _recent_data: str = None
 
     def __init__(self):
@@ -63,13 +65,12 @@ class Connector:
                 )
 
                 diff = datetime.now() - datetime.fromtimestamp(data["ts"])
-
                 # Reload if older than 23h
                 if (diff.seconds // 3600) > 23:
                     print("Token older than 23h")
                     return None
 
-                print("Token loaded")
+                logging.info(f"Token loaded from {datetime.fromtimestamp(data["ts"])}")
                 return data["token"]
         except:
             return None
@@ -95,7 +96,8 @@ class Connector:
             self._store_token(token)
 
         self._session = requests.Session()
-        self._session.headers = {"Authorization": f"Bearer { token}"}
+        self._session.headers = {"Authorization": f"Bearer {token}"}
+        self._token = token
 
     def revalidate(self):
         res = self._post("Auth/validate")
@@ -106,7 +108,8 @@ class Connector:
             return
 
         token = data["newToken"]
-        self._session.headers = {"Authorization": f"Bearer { token}"}
+        self._session.headers = {"Authorization": f"Bearer {token}"}
+        self._token = token
 
         print("Token saved l=", len(token))
 
@@ -115,11 +118,19 @@ class Connector:
 
     def get_accounts(self):
         res = self._post("account/search", {"onlyActiveAccounts": True})
-        print(res.json()["accounts"])
+        return res.json()["accounts"]
 
     def get_contracts(self, text="ES"):
         res = self._post("contract/search", {"live": LIVE_DATA, "searchText": text})
-        print(res.json()["contracts"])
+        return res.json()["contracts"]
+
+    def find_contract(self, text="ES"):
+        contracts = self.get_contracts(text)
+        result = next((c for c in contracts if c["name"].startswith(text)), None)
+        if result:
+            return result["id"]
+
+        raise ValueError(f"Contract {text} not found")
 
     def get_bars(
         self,
