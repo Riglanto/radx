@@ -6,7 +6,7 @@ Simple dashboard to preview your backtested strategy and live price.
 
 ## Quickstart
 
-- Install
+- Install uv `curl -LsSf https://astral.sh/uv/install.sh | sh`
 
 - Env/config (and add your credentials)
 ```cp .env.example .env```
@@ -20,7 +20,7 @@ Simple dashboard to preview your backtested strategy and live price.
 ### Docs:
 - TopstepX api https://gateway.docs.projectx.com/docs/intro (api)
 - SignalR https://gateway.docs.projectx.com/docs/realtime/ (websocket)
-- Pyenv https://github.com/pyenv/pyenv (python env)
+- Uv https://github.com/astral-sh/uv (python env)
 - Dash https://dash.plotly.com/ (ui)
 - Vbt https://vectorbt.dev/ (backtesting)
 
