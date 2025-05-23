@@ -7,11 +7,6 @@ from config import MARKET_HUB_URL
 from connector import Connector
 
 
-def login_function():
-    token = Connector()._read_token()
-    return token
-
-
 class Websocket:
     symbol: str
     last_price: float = None
