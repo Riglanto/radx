@@ -29,7 +29,7 @@ def main(ui):
     title = f"Radx - {symbol} - {tf[0]} {tf[1].name} ({LOCAL_TIMEZONE})"
     contract_id = con.find_contract(symbol)
 
-    ws = Websocket(contract_id, Connector()).run()
+    ws = Websocket(contract_id, con).run()
 
     df = con.get_bars(contract_id, tf=tf)
 

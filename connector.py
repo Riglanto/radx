@@ -1,7 +1,7 @@
 import requests
 import os
 from enum import Enum
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 import logging
 
@@ -65,12 +65,12 @@ class Connector:
                 )
 
                 diff = datetime.now() - datetime.fromtimestamp(data["ts"])
-                # Reload if older than 23h
-                if (diff.seconds // 3600) > 23:
+
+                if diff > timedelta(hours=23):
                     print("Token older than 23h")
                     return None
 
-                logging.info(f"Token loaded from {datetime.fromtimestamp(data["ts"])}")
+                print(f"Token loaded from {datetime.fromtimestamp(data["ts"])}")
                 return data["token"]
         except:
             return None
