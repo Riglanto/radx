@@ -12,7 +12,7 @@ import plotly.graph_objects as go
 from dash import Dash, Input, Output, callback, dcc, html, dependencies
 import click
 
-from config import LOCAL_TIMEZONE
+from config import LOCAL_TIMEZONE, APP_NAME
 from connector import TIME_UNITS, Connector
 from ws import Websocket
 
@@ -28,7 +28,7 @@ def main(strategy, ui):
     con = Connector()
 
     symbol, tf = "ES", [3, TIME_UNITS.Minute]
-    title = f"Radx - {strategy} - {symbol} - {tf[0]} {tf[1].name} ({LOCAL_TIMEZONE})"
+    title = f"{APP_NAME} - {strategy} - {symbol} - {tf[0]} {tf[1].name} ({LOCAL_TIMEZONE})"
     contract_id = con.find_contract(symbol)
 
     ws = Websocket(contract_id, con).run()
@@ -49,13 +49,11 @@ def main(strategy, ui):
     )
     summary_fig = pf.plot(subplots=["orders", "trade_pnl", "cum_returns"])
 
-    # df["fast_ma"] = fast_ma.ma
-    # df["slow_ma"] = slow_ma.ma
-
     # print(pf.stats())
 
     if ui:
-        app = Dash("Radx", prevent_initial_callbacks=True)
+        app = Dash(APP_NAME, prevent_initial_callbacks=True)
+        app.title = APP_NAME
 
         all_dates = pd.date_range(
             df["time"].min(), df["time"].max(), freq="D", tz=LOCAL_TIMEZONE
