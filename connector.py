@@ -79,10 +79,13 @@ class Connector:
         token = self._read_token()
 
         if not token:
+            username = os.getenv("SECRET_USERNAME")
+            if not username:
+                raise Exception("Missing .env setup")
             res = requests.post(
                 f"{API_URL}/api/Auth/loginKey",
                 json={
-                    "userName": os.getenv("SECRET_USERNAME"),
+                    "userName": username,
                     "apiKey": os.getenv("SECRET_API_KEY"),
                 },
             )
