@@ -22,7 +22,7 @@ class TIME_UNITS(Enum):
     Month = 6
 
 
-## Months
+# Months
 # January	F
 # February	G
 # March	H
@@ -67,10 +67,11 @@ class Connector:
                 diff = datetime.now() - datetime.fromtimestamp(data["ts"])
 
                 if diff > timedelta(hours=23):
-                    print("Token older than 23h")
+                    print("Token older than 23h, reloading...")
                     return None
 
-                print(f"Token loaded from {datetime.fromtimestamp(data["ts"])}")
+                print(
+                    f"Token loaded from {datetime.fromtimestamp(data["ts"])}")
                 return data["token"]
         except:
             return None
@@ -124,12 +125,14 @@ class Connector:
         return res.json()["accounts"]
 
     def get_contracts(self, text="ES"):
-        res = self._post("contract/search", {"live": LIVE_DATA, "searchText": text})
+        res = self._post("contract/search",
+                         {"live": LIVE_DATA, "searchText": text})
         return res.json()["contracts"]
 
     def find_contract(self, text="ES"):
         contracts = self.get_contracts(text)
-        result = next((c for c in contracts if c["name"].startswith(text)), None)
+        result = next(
+            (c for c in contracts if c["name"].startswith(text)), None)
         if result:
             return result["id"]
 
@@ -174,7 +177,8 @@ class Connector:
             df["t_original"] = df["t"]
             df["t"] = df["t"].dt.tz_convert(LOCAL_TIMEZONE)
 
-        df.columns = ["time", "open", "high", "low", "close", "volume", "t_original"]
+        df.columns = ["time", "open", "high",
+                      "low", "close", "volume", "t_original"]
 
         if not os.path.exists("_data"):
             os.mkdir("_data")

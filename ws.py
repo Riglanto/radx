@@ -50,17 +50,18 @@ class Websocket:
             hub_connection.on("GatewayTrade", handle_trade)
 
         def on_open():
-            print("rad connection opened and handshake received ready to send messages")
+            print("WS connection opened and handshake received ready to send messages")
             subscribe()
 
         def on_reconnect():
-            print("rad reconnected")
+            print("WS reconnected")
             subscribe()
 
         hub_connection.on_open(on_open)
 
         hub_connection.on_reconnect(on_reconnect)
-        hub_connection.on_close(lambda e: print(f"rad connection closed -> {e}"))
+        hub_connection.on_close(lambda e: print(
+            f"rad connection closed -> {e}"))
         hub_connection.on_error(lambda e: print(f"rad err -> {e}"))
 
         hub_connection.start()

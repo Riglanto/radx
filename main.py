@@ -37,9 +37,8 @@ def main(strategy: str, ui: bool, stream: bool):
     # Time index req for vbt plots
     df.set_index(df["time"], inplace=True)
 
-    # Filter data for the last day
+    # Get last trading day for initial load
     last_day = df["time"].max()
-    # df = df[df["time"].dt.date == last_day]
 
     stra = StrategyFactory.create(
         strategy, df, StrategyConfig(trading_hours=[7, 22]))
@@ -50,7 +49,8 @@ def main(strategy: str, ui: bool, stream: bool):
         entries=df.long_entries,
         exits=df.long_exits,
         freq=f"{tf[0]}{tf[1].name.lower()[0]}",
-        size=1
+        size=1,
+        size_type="amount"
     )
     summary_fig = pf.plot(subplots=["orders", "trade_pnl", "cum_returns"])
 
