@@ -1,8 +1,9 @@
 
-from typing import List
+from typing import List, Tuple
 
 import pandas as pd
-import vectorbt as vbt
+import os
+import importlib
 
 
 class DrawableIndicator:
@@ -13,48 +14,46 @@ class DrawableIndicator:
         self.width = width
 
 
+class StrategyConfig:
+    trading_hours: Tuple[int, int]
+
+    def __init__(self, trading_hours: Tuple[int, int] = [0, 24]):
+        self.trading_hours = trading_hours
+
+
 class BaseStrategy:
     df: pd.DataFrame
     drawable_indicators: List[DrawableIndicator] = []
+    config: StrategyConfig
 
-    def __init__(self, df: pd.DataFrame):
+    def __init__(self, df: pd.DataFrame, config: StrategyConfig):
         self.df = df.copy()
-
-
-class DefaultStrategy(BaseStrategy):
-    def run(self):
-        fast_ma = vbt.MA.run(self.df.close, 8, short_name="fast MA")
-        slow_ma = vbt.MA.run(self.df.close, 34, short_name="slow MA")
-
-        self.df["short_entries"] = fast_ma.ma_crossed_above(slow_ma)
-        self.df["long_entries"] = fast_ma.ma_crossed_below(slow_ma)
-
-        self.df["fast_ma"] = fast_ma.ma
-        self.df["slow_ma"] = slow_ma.ma
-
-        self.drawable_indicators = [
-            DrawableIndicator("fast_ma", "lines", "purple", 1),
-            DrawableIndicator("slow_ma", "lines", "blue", 1)
-        ]
-
-        return self.df
+        self.config = config
 
 
 class StrategyFactory:
     _strategies = {}
 
     @classmethod
-    def register_strategy(cls, strategy_class):
+    def register_strategy(cls, strategy_class: str):
         cls._strategies[strategy_class.__name__.lower()] = strategy_class
 
     @classmethod
-    def create(cls, strategy_name, df):
+    def create(cls, strategy_name: str, df: pd.DataFrame, config: StrategyConfig) -> BaseStrategy:
         strategy_name = strategy_name.lower()
         if strategy_name in cls._strategies:
-            return cls._strategies[strategy_name](df)
+            return cls._strategies[strategy_name](df, config)
         else:
             raise ValueError(f"Unknown strategy: {strategy_name}")
 
 
-# Automatically register strategies
-StrategyFactory.register_strategy(DefaultStrategy)
+# Dynamically register all strategies in the strategies directory
+strategies_dir = os.path.dirname(__file__)
+for file in os.listdir(strategies_dir):
+    if file.endswith(".py") and file != "__init__.py":
+        module_name = f"strategies.{file[:-3]}"
+        module = importlib.import_module(module_name)
+        for attr in dir(module):
+            obj = getattr(module, attr)
+            if isinstance(obj, type) and issubclass(obj, BaseStrategy) and obj is not BaseStrategy:
+                StrategyFactory.register_strategy(obj)
