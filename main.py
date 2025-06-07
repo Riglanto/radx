@@ -16,17 +16,19 @@ from config import LOCAL_TIMEZONE
 from connector import TIME_UNITS, Connector
 from ws import Websocket
 
+from strategies import BaseStrategy, StrategyFactory
 
 load_dotenv()
 
 
 @click.command()
+@click.option("--strategy", default="DefaultStrategy", help="Strategy name.")
 @click.option("--ui", is_flag=True, help="Show dash dashboard.")
-def main(ui):
+def main(strategy, ui):
     con = Connector()
 
     symbol, tf = "ES", [3, TIME_UNITS.Minute]
-    title = f"Radx - {symbol} - {tf[0]} {tf[1].name} ({LOCAL_TIMEZONE})"
+    title = f"Radx - {strategy} - {symbol} - {tf[0]} {tf[1].name} ({LOCAL_TIMEZONE})"
     contract_id = con.find_contract(symbol)
 
     ws = Websocket(contract_id, con).run()
@@ -36,24 +38,19 @@ def main(ui):
     # Time index req for vbt plots
     df.set_index(df["time"], inplace=True)
 
-    fast_ma = vbt.MA.run(df.close, 8, short_name="fast MA")
-    slow_ma = vbt.MA.run(df.close, 34, short_name="slow MA")
-
-    short_entries = fast_ma.ma_crossed_above(slow_ma)
-    long_entries = fast_ma.ma_crossed_below(slow_ma)
+    stra = StrategyFactory.create(strategy, df)
+    df = stra.run()
 
     pf = vbt.Portfolio.from_signals(
         df.close,
-        entries=long_entries,
-        exits=short_entries,
+        entries=df.long_entries,
+        exits=df.short_entries,
         freq=f"{tf[0]}{tf[1].name.lower()[0]}",
     )
     summary_fig = pf.plot(subplots=["orders", "trade_pnl", "cum_returns"])
 
-    df["fast_ma"] = fast_ma.ma
-    df["slow_ma"] = slow_ma.ma
-    df["long_entries"] = long_entries
-    df["short_entries"] = short_entries
+    # df["fast_ma"] = fast_ma.ma
+    # df["slow_ma"] = slow_ma.ma
 
     # print(pf.stats())
 
@@ -79,7 +76,7 @@ def main(ui):
         def update_output(date_value, slider_value, n_intervals):
             if date_value:
                 return build_chart(
-                    df,
+                    stra,
                     pd.to_datetime(date_value),
                     slider_value,
                     last_price=ws.last_price,
@@ -87,7 +84,8 @@ def main(ui):
 
         app.layout = html.Div(
             [
-                dcc.Interval(id="interval", interval=1 * 1000),
+                dcc.Interval(id="interval", interval=3 *
+                             1000),  # updates every 3 secs
                 html.Div(
                     children=[
                         html.H4(
@@ -120,7 +118,8 @@ def main(ui):
                         ),
                         dcc.Graph(
                             id="chart",
-                            figure=build_chart(df, trading_hours=trading_hours),
+                            figure=build_chart(
+                                stra, trading_hours=trading_hours),
                             style={"flex": 1, "height": "85vh"},
                         ),
                     ],
@@ -133,11 +132,12 @@ def main(ui):
 
 
 def build_chart(
-    df: pd.DataFrame,
+    stra: BaseStrategy,
     date=datetime.today(),
     trading_hours: tuple[int, int] = [],
     last_price: float = None,
 ) -> go.Figure:
+    df = stra.df
     df = df[df["time"].dt.date == date.date()]
     if trading_hours:
         df = df[
@@ -147,6 +147,18 @@ def build_chart(
 
     long_entries = df[df["long_entries"] == True]
     short_entries = df[df["short_entries"] == True]
+
+    indicators = map(
+        lambda ind: go.Scatter(
+            x=df["time"],
+            y=df[ind.key],
+            mode=ind.mode,
+            name=ind.key.replace("_", " ").title(),
+            line=dict(color=ind.color, width=ind.width),
+        ),
+        stra.drawable_indicators,
+    )
+
     fig = go.Figure(
         data=[
             go.Candlestick(
@@ -157,20 +169,7 @@ def build_chart(
                 close=df["close"],
                 name="Price",
             ),
-            go.Scatter(
-                x=df["time"],
-                y=df["slow_ma"],
-                mode="lines",
-                name="Slow MA",
-                line=dict(color="blue", width=1),
-            ),
-            go.Scatter(
-                x=df["time"],
-                y=df["fast_ma"],
-                mode="lines",
-                name="Fast MA",
-                line=dict(color="purple", width=1),
-            ),
+            *indicators,
             go.Scatter(
                 x=long_entries["time"],
                 y=long_entries["close"],
