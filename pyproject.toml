@@ -16,3 +16,6 @@ dependencies = [
     "ta-lib>=0.6.3",
     "vectorbt>=0.27.3",
 ]
+
+[tool.black]
+line-length = 160

@@ -70,8 +70,7 @@ class Connector:
                     print("Token older than 23h, reloading...")
                     return None
 
-                print(
-                    f"Token loaded from {datetime.fromtimestamp(data["ts"])}")
+                print(f"Token loaded from {datetime.fromtimestamp(data["ts"])}")
                 return data["token"]
         except:
             return None
@@ -125,14 +124,12 @@ class Connector:
         return res.json()["accounts"]
 
     def get_contracts(self, text="ES"):
-        res = self._post("contract/search",
-                         {"live": LIVE_DATA, "searchText": text})
+        res = self._post("contract/search", {"live": LIVE_DATA, "searchText": text})
         return res.json()["contracts"]
 
     def find_contract(self, text="ES"):
         contracts = self.get_contracts(text)
-        result = next(
-            (c for c in contracts if c["name"].startswith(text)), None)
+        result = next((c for c in contracts if c["name"].startswith(text)), None)
         if result:
             return result["id"]
 
@@ -151,34 +148,41 @@ class Connector:
     ) -> pd.DataFrame:
         key = f"{contractId}_{times[0]}_{times[1]}_{tf[0]}_{tf[1].value}"
         csv_name = f"_data/{key}.csv"
-        if self._recent_data == key or os.path.exists(csv_name):
-            print("Loading from cache", csv_name)
-            return pd.read_csv(csv_name)
 
-        res = self._post(
-            "History/retrieveBars",
-            {
-                "contractId": contractId,
-                "live": LIVE_DATA,
-                "startTime": times[0],
-                "endTime": times[1],
-                "unitNumber": tf[0],
-                "unit": tf[1].value,
-                "limit": limit,
-                "includePartialBar": includePartialBar,
-            },
-        )
+        def _load():
+            if self._recent_data == key or os.path.exists(csv_name):
+                print("Loading from cache", csv_name)
+                return pd.read_csv(csv_name)
 
-        bars = res.json()["bars"]
+            res = self._post(
+                "History/retrieveBars",
+                {
+                    "contractId": contractId,
+                    "live": LIVE_DATA,
+                    "startTime": times[0],
+                    "endTime": times[1],
+                    "unitNumber": tf[0],
+                    "unit": tf[1].value,
+                    "limit": limit,
+                    "includePartialBar": includePartialBar,
+                },
+            )
 
-        df = pd.DataFrame(bars)
-        df["t"] = pd.to_datetime(df["t"])
+            bars = res.json()["bars"]
+
+            if len(bars) == 0:
+                raise ValueError("No bars returned from API")
+
+            df = pd.DataFrame(bars)
+            df.columns = ["time", "open", "high", "low", "close", "volume"]
+            return df
+
+        df = _load()
+
+        df["time"] = pd.to_datetime(df["time"])
         if LOCAL_TIMEZONE:
-            df["t_original"] = df["t"]
-            df["t"] = df["t"].dt.tz_convert(LOCAL_TIMEZONE)
-
-        df.columns = ["time", "open", "high",
-                      "low", "close", "volume", "t_original"]
+            df["t_original"] = df["time"]
+            df["time"] = df["time"].dt.tz_convert(LOCAL_TIMEZONE)
 
         if not os.path.exists("_data"):
             os.mkdir("_data")

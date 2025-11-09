@@ -30,7 +30,8 @@ def main(strategy: str, ui: bool, stream: bool):
 
     ws = Websocket(contract_id, con).run() if stream else None
 
-    df = con.get_bars(contract_id, tf=tf)
+    df = con.get_bars(contract_id, tf=tf, times=["2025-11-07T00:00:00", "2025-11-08T00:00:00"])
+    print(df.dtypes)
 
     df.sort_values(by="time", inplace=True)
 
@@ -40,8 +41,7 @@ def main(strategy: str, ui: bool, stream: bool):
     # Get last trading day for initial load
     last_day = df["time"].max()
 
-    stra = StrategyFactory.create(
-        strategy, df, StrategyConfig(trading_hours=[7, 22]))
+    stra = StrategyFactory.create(strategy, df, StrategyConfig(trading_hours=[7, 22]))
     df = stra.run()
 
     pf = vbt.Portfolio.from_signals(
@@ -50,7 +50,7 @@ def main(strategy: str, ui: bool, stream: bool):
         exits=df.long_exits,
         freq=f"{tf[0]}{tf[1].name.lower()[0]}",
         size=1,
-        size_type="amount"
+        size_type="amount",
     )
     summary_fig = pf.plot(subplots=["orders", "trade_pnl", "cum_returns"])
 
@@ -58,13 +58,9 @@ def main(strategy: str, ui: bool, stream: bool):
         app = Dash(APP_NAME, prevent_initial_callbacks=True)
         app.title = APP_NAME
 
-        all_dates = pd.date_range(
-            df["time"].min(), df["time"].max(), freq="D", tz=LOCAL_TIMEZONE
-        )
+        all_dates = pd.date_range(df["time"].min(), df["time"].max(), freq="D", tz=LOCAL_TIMEZONE)
         present_dates = df["time"].dt.date.unique().tolist()
-        disabled_dates = sorted(
-            set(all_dates.date) - set(pd.to_datetime(present_dates).date)
-        )
+        disabled_dates = sorted(set(all_dates.date) - set(pd.to_datetime(present_dates).date))
 
         trading_hours = stra.config.trading_hours
 
@@ -89,14 +85,11 @@ def main(strategy: str, ui: bool, stream: bool):
         )
         def update_table(date_value):
             if date_value:
-                return build_table_records(
-                    pf.positions, pd.to_datetime(date_value)
-                )
+                return build_table_records(pf.positions, pd.to_datetime(date_value))
 
         app.layout = html.Div(
             [
-                dcc.Interval(id="interval", interval=3 *
-                             1000),  # updates every 3 secs
+                dcc.Interval(id="interval", interval=3 * 1000),  # updates every 3 secs
                 html.Div(
                     children=[
                         html.H4(
@@ -118,37 +111,41 @@ def main(strategy: str, ui: bool, stream: bool):
                     ],
                     style={"display": "flex", "justifyContent": "center"},
                 ),
-                dcc.RangeSlider(
-                    0, 24, 1, value=trading_hours, id="trading-hours-slider"
-                ),
+                dcc.RangeSlider(0, 24, 1, value=trading_hours, id="trading-hours-slider"),
                 html.Div(
                     children=[
-                        dcc.Graph(
-                            id="summary_chart",
-                            figure=summary_fig
-                        ),
+                        dcc.Graph(id="summary_chart", figure=summary_fig),
                         html.Div(
                             children=[
                                 dcc.Graph(
                                     id="chart",
-                                    figure=build_chart(
-                                        stra, last_day, trading_hours=trading_hours),
-                                    style={"height": "85vh"}
+                                    figure=build_chart(stra, last_day, trading_hours=trading_hours),
+                                    style={"height": "85vh"},
                                 ),
-                                html.H6(
-                                    children=f"Buys {pf.orders.buy.count()}, Sells {pf.orders.sell.count()}")
+                                html.H6(children=f"Buys {pf.orders.buy.count()}, Sells {pf.orders.sell.count()}"),
                             ],
                             style={"flex": 1},
-                        )
+                        ),
                     ],
                     style={"display": "flex"},
                 ),
                 dash_table.DataTable(
                     data=build_table_records(pf.positions, last_day),
-                    columns=[{"name": i, "id": i} for i in
-                             ["Direction", "Size", "PnL", "Entry Timestamp",
-                              "Avg Entry Price", "Exit Timestamp", "Avg Exit Price", "Status"]],
-                    id="table-records"),
+                    columns=[
+                        {"name": i, "id": i}
+                        for i in [
+                            "Direction",
+                            "Size",
+                            "PnL",
+                            "Entry Timestamp",
+                            "Avg Entry Price",
+                            "Exit Timestamp",
+                            "Avg Exit Price",
+                            "Status",
+                        ]
+                    ],
+                    id="table-records",
+                ),
             ],
         )
 
@@ -157,8 +154,7 @@ def main(strategy: str, ui: bool, stream: bool):
 
 def build_table_records(positions, date):
     df = positions.records_readable
-    return df[df["Entry Timestamp"].dt.date == date.date()].to_dict(
-        'records')
+    return df[df["Entry Timestamp"].dt.date == date.date()].to_dict("records")
 
 
 def build_chart(
@@ -170,13 +166,10 @@ def build_chart(
     df = stra.df
     df = df[df["time"].dt.date == date.date()]
     if trading_hours:
-        df = df[
-            (df["time"].dt.hour >= (trading_hours[0] - 1) % 25)
-            & (df["time"].dt.hour <= trading_hours[1])
-        ]
+        df = df[(df["time"].dt.hour >= (trading_hours[0] - 1) % 25) & (df["time"].dt.hour <= trading_hours[1])]
 
-    long_entries = df[df["long_entries"] == True]
-    long_exits = df[df["long_exits"] == True]
+    long_entries = df[df["long_entries"]]
+    long_exits = df[df["long_exits"]]
 
     indicators = map(
         lambda ind: go.Scatter(
@@ -231,11 +224,19 @@ def build_chart(
 
     trading_allowed = df[df["trading_allowed"]]
 
-    fig.add_vline(x=trading_allowed.iloc[0]["time"],
-                  line_width=1, line_dash="dash", line_color="green")
+    fig.add_vline(
+        x=trading_allowed.iloc[0]["time"],
+        line_width=1,
+        line_dash="dash",
+        line_color="green",
+    )
 
-    fig.add_vline(x=trading_allowed.iloc[-1]["time"],
-                  line_width=1, line_dash="dash", line_color="red")
+    fig.add_vline(
+        x=trading_allowed.iloc[-1]["time"],
+        line_width=1,
+        line_dash="dash",
+        line_color="red",
+    )
 
     if last_price:
         fig.add_hline(
