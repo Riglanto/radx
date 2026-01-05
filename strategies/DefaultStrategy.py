@@ -1,5 +1,6 @@
 import pandas as pd
 import vectorbt as vbt
+import numpy as np
 
 from strategies import BaseStrategy, DrawableIndicator
 
@@ -37,6 +38,20 @@ class DefaultStrategy(BaseStrategy):
         self.df["fast_ma"] = fast_ma.ma
         self.df["slow_ma"] = slow_ma.ma
 
-        self.drawable_indicators = [DrawableIndicator("fast_ma", "lines", "purple", 1), DrawableIndicator("slow_ma", "lines", "blue", 1)]
+        # In position and trade id
+        self.df["in_position"] = self.df["long_entries"].cumsum() - self.df["long_exits"].cumsum()
+        self.df["trade_id"] = self.df["long_entries"].cumsum().astype(int)
+
+        # Trailing stop
+        self.df["stops"] = self.df["high"] - (22 * 0.25)
+        self.df.loc[self.df["in_position"] <= 0, "stops"] = None
+        self.df["stops"] = self.df.groupby("trade_id")["stops"].cummax()
+        self.df["long_exits"] |= self.df["low"] < self.df["stops"]
+
+        # Drawables
+        self.drawable_indicators = [
+            DrawableIndicator("fast_ma", "lines", "purple", 1),
+            DrawableIndicator("slow_ma", "lines", "blue", 1),
+        ]
 
         return self.df

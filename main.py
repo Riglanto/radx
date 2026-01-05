@@ -1,6 +1,7 @@
 from datetime import datetime
 
 import pandas as pd
+import numpy as np
 from dotenv import load_dotenv
 
 import vectorbt as vbt
@@ -13,6 +14,7 @@ from connector import TIME_UNITS, Connector
 from ws import Websocket
 
 from strategies import BaseStrategy, StrategyFactory, StrategyConfig
+from numba import njit
 
 load_dotenv()
 
@@ -30,8 +32,8 @@ def main(strategy: str, ui: bool, stream: bool):
 
     ws = Websocket(contract_id, con).run() if stream else None
 
-    df = con.get_bars(contract_id, tf=tf, times=["2025-11-07T00:00:00", "2025-11-08T00:00:00"])
-    print(df.dtypes)
+    # df = con.get_bars(contract_id, tf=tf, times=["2025-12-23T00:00:00", "2025-12-24T00:00:00"])
+    df = con.get_bars(contract_id, tf=tf, times=["2025-12-23T00:00:00", "2025-12-25T00:00:00"])
 
     df.sort_values(by="time", inplace=True)
 
@@ -52,6 +54,16 @@ def main(strategy: str, ui: bool, stream: bool):
         size=1,
         size_type="amount",
     )
+
+    def build_positions(positions):
+        df = positions.records_readable
+        df["Ticks"] = (df["Avg Exit Price"] - df["Avg Entry Price"]) / 0.25
+        df["Gain"] = df["Ticks"] * 12.5
+
+        return df
+
+    positions = build_positions(pf.positions)
+
     summary_fig = pf.plot(subplots=["orders", "trade_pnl", "cum_returns"])
 
     if ui:
@@ -68,12 +80,12 @@ def main(strategy: str, ui: bool, stream: bool):
             Output("chart", "figure"),
             Input("date-picker", "date"),
             Input("trading-hours-slider", "value"),
-            Input("interval", "n_intervals"),
         )
-        def update_output(date_value, slider_value, n_intervals):
+        def update_output(date_value, slider_value):
             if date_value:
                 return build_chart(
                     stra,
+                    positions,
                     pd.to_datetime(date_value),
                     slider_value,
                     last_price=ws and ws.last_price,
@@ -85,11 +97,11 @@ def main(strategy: str, ui: bool, stream: bool):
         )
         def update_table(date_value):
             if date_value:
-                return build_table_records(pf.positions, pd.to_datetime(date_value))
+                return build_table_records(positions, pd.to_datetime(date_value))
 
         app.layout = html.Div(
             [
-                dcc.Interval(id="interval", interval=3 * 1000),  # updates every 3 secs
+                dcc.Interval(id="interval", interval=3 * 1000) if stream else None,  # updates every 3 secs
                 html.Div(
                     children=[
                         html.H4(
@@ -119,7 +131,7 @@ def main(strategy: str, ui: bool, stream: bool):
                             children=[
                                 dcc.Graph(
                                     id="chart",
-                                    figure=build_chart(stra, last_day, trading_hours=trading_hours),
+                                    figure=build_chart(stra, positions, last_day, trading_hours=trading_hours),
                                     style={"height": "85vh"},
                                 ),
                                 html.H6(children=f"Buys {pf.orders.buy.count()}, Sells {pf.orders.sell.count()}"),
@@ -130,7 +142,7 @@ def main(strategy: str, ui: bool, stream: bool):
                     style={"display": "flex"},
                 ),
                 dash_table.DataTable(
-                    data=build_table_records(pf.positions, last_day),
+                    data=build_table_records(positions, last_day),
                     columns=[
                         {"name": i, "id": i}
                         for i in [
@@ -141,6 +153,8 @@ def main(strategy: str, ui: bool, stream: bool):
                             "Avg Entry Price",
                             "Exit Timestamp",
                             "Avg Exit Price",
+                            "Ticks",
+                            "Gain",
                             "Status",
                         ]
                     ],
@@ -152,24 +166,32 @@ def main(strategy: str, ui: bool, stream: bool):
         app.run()
 
 
-def build_table_records(positions, date):
-    df = positions.records_readable
-    return df[df["Entry Timestamp"].dt.date == date.date()].to_dict("records")
+def build_table_records(df, date):
+    records = df[df["Entry Timestamp"].dt.date == date.date()]
+    sum_row = records[["Ticks", "Gain"]].sum().to_frame().T
+    sum_row["Direction"] = "TOTAL"
+    records = pd.concat([records, sum_row], ignore_index=True)
+
+    return records.to_dict("records")
 
 
 def build_chart(
     stra: BaseStrategy,
+    positions: pd.DataFrame,
     date=datetime.today(),
     trading_hours: tuple[int, int] = [],
     last_price: float = None,
 ) -> go.Figure:
     df = stra.df
     df = df[df["time"].dt.date == date.date()]
+
+    df = pd.merge(df, positions, left_on="t_original", right_on="Exit Timestamp", how="left")
+
     if trading_hours:
         df = df[(df["time"].dt.hour >= (trading_hours[0] - 1) % 25) & (df["time"].dt.hour <= trading_hours[1])]
 
-    long_entries = df[df["long_entries"]]
-    long_exits = df[df["long_exits"]]
+    long_entries = df[df["Entry Timestamp"].notna()]
+    long_exits = df[df["Exit Timestamp"].notna()]
 
     indicators = map(
         lambda ind: go.Scatter(
@@ -194,8 +216,15 @@ def build_chart(
             ),
             *indicators,
             go.Scatter(
-                x=long_entries["time"],
-                y=long_entries["close"],
+                x=df["time"],
+                y=df["stops"],
+                mode="lines",
+                name="Stop",
+                line=dict(color="black", width=1),
+            ),
+            go.Scatter(
+                x=long_entries["Entry Timestamp"],
+                y=long_entries["Avg Entry Price"],
                 mode="markers",
                 name="Buys",
                 text="Buy",
@@ -207,11 +236,11 @@ def build_chart(
                 textposition="bottom center",
             ),
             go.Scatter(
-                x=long_exits["time"],
-                y=long_exits["close"],
+                x=long_exits["Exit Timestamp"],
+                y=long_exits["Avg Exit Price"],
                 mode="markers",
-                name="Sells",
-                text="Sell",
+                name="Sell",
+                text=long_exits["Ticks"].apply(lambda x: f"Sell {x:+0.0f}"),
                 marker=dict(
                     color="red",
                     size=20,
