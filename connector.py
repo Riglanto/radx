@@ -137,6 +137,7 @@ class Connector:
 
     def get_bars(
         self,
+        symbol: str,
         contractId: str,
         times: tuple[str, str] = [
             datetime.now().isoformat(),
@@ -146,35 +147,88 @@ class Connector:
         limit=1000000000,  # fetches all the data for contract
         includePartialBar=False,
     ) -> pd.DataFrame:
-        key = f"{contractId}_{times[0]}_{times[1]}_{tf[0]}_{tf[1].value}"
-        csv_name = f"_data/{key}.csv"
+        main_key = f"{symbol}_{times[0]}_{times[1]}_{tf[0]}_{tf[1].value}"
+        main_csv_name = f"_data/{main_key}.csv"
 
         def _load():
-            if self._recent_data == key or os.path.exists(csv_name):
-                print("Loading from cache", csv_name)
-                return pd.read_csv(csv_name)
+            if self._recent_data == main_key or os.path.exists(main_csv_name):
+                print("Loading from cache", main_csv_name)
+                return pd.read_csv(main_csv_name)
 
-            res = self._post(
-                "History/retrieveBars",
-                {
-                    "contractId": contractId,
-                    "live": LIVE_DATA,
-                    "startTime": times[0],
-                    "endTime": times[1],
-                    "unitNumber": tf[0],
-                    "unit": tf[1].value,
-                    "limit": limit,
-                    "includePartialBar": includePartialBar,
-                },
-            )
+            current = contractId.split(".")[-1]  # CON.F.US.EP.H26
+            m, y = current[-3], int(current[-2:])
+            months = ["H", "M", "U", "Z"]
+            month_index = months.index(m)
 
-            bars = res.json()["bars"]
+            dfs = {}
 
-            if len(bars) == 0:
-                raise ValueError("No bars returned from API")
+            for i in range(0, 6):
+                month = months[(month_index - i) % len(months)]
+                contract = contractId[:-3] + month + str(y)
 
-            df = pd.DataFrame(bars)
-            df.columns = ["time", "open", "high", "low", "close", "volume"]
+                if month == "H":
+                    y -= 1
+
+                key = f"{contract}_{times[0]}_{times[1]}_{tf[0]}_{tf[1].value}"
+                csv_name = f"_data/{key}.csv"
+
+                if self._recent_data == key or os.path.exists(csv_name):
+                    print("Loading from cache", csv_name)
+                    dfs[contract] = pd.read_csv(csv_name)
+
+                    continue
+
+                res = self._post(
+                    "History/retrieveBars",
+                    {
+                        "contractId": contract,
+                        "live": LIVE_DATA,
+                        "startTime": times[0],
+                        "endTime": times[1],
+                        "unitNumber": tf[0],
+                        "unit": tf[1].value,
+                        "limit": limit,
+                        "includePartialBar": includePartialBar,
+                    },
+                )
+
+                bars = res.json()["bars"]
+
+                if len(bars) == 0:
+                    print("No bars returned from API for", contract)
+                    continue
+
+                df = pd.DataFrame(bars)
+                df.columns = ["time", "open", "high", "low", "close", "volume"]
+
+                if not os.path.exists("_data"):
+                    os.mkdir("_data")
+
+                print(f"Fetched {df.shape} for {contract}")
+
+                df.to_csv(csv_name, index=False)
+
+                dfs[contract] = df
+
+            volumes = []
+
+            for contract, df in dfs.items():
+                v = df.groupby(pd.DatetimeIndex(df["time"]).normalize())["volume"].sum()
+                volumes.append(v)
+            volume = pd.concat(volumes, axis=1)
+            volume.columns = dfs.keys()
+            mxs = volume.eq(volume.max(axis=1), axis=0)
+            volume["Most Liquid"] = mxs.dot(mxs.columns + ", ").str.rstrip(", ")
+
+            for contract, df in dfs.items():
+                dates = volume[volume["Most Liquid"] == contract].index
+                dfs[contract] = df[pd.DatetimeIndex(df["time"]).normalize().isin(dates)]
+
+            df = pd.concat(dfs)
+
+            if len(df) == 0:
+                raise ValueError("No data fetched for the given parameters.")
+
             return df
 
         df = _load()
@@ -186,7 +240,7 @@ class Connector:
 
         if not os.path.exists("_data"):
             os.mkdir("_data")
-        df.to_csv(csv_name, index=False)
-        self._recent_data = key
+        df.to_csv(main_csv_name, index=False)
+        self._recent_data = main_key
 
         return df

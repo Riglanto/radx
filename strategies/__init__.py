@@ -1,4 +1,3 @@
-
 from typing import List, Tuple
 
 import pandas as pd
@@ -29,6 +28,9 @@ class BaseStrategy:
     def __init__(self, df: pd.DataFrame, config: StrategyConfig):
         self.df = df.copy()
         self.config = config
+
+    def run(self, **params) -> pd.DataFrame:
+        raise NotImplementedError("Strategy must implement the run method.")
 
 
 class StrategyFactory:

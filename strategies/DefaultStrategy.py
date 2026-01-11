@@ -6,9 +6,13 @@ from strategies import BaseStrategy, DrawableIndicator
 
 
 class DefaultStrategy(BaseStrategy):
-    def run(self):
-        fast_ma = vbt.MA.run(self.df.close, 8, short_name="fast MA")
-        slow_ma = vbt.MA.run(self.df.close, 34, short_name="slow MA")
+    def run(self, **params) -> pd.DataFrame:
+        p_stop = params.get("stop", 22)
+        p_fast_ma = params.get("fast_ma", 8)
+        p_slow_ma = params.get("slow_ma", 34)
+
+        fast_ma = vbt.MA.run(self.df.close, p_fast_ma, short_name="fast MA")
+        slow_ma = vbt.MA.run(self.df.close, p_slow_ma, short_name="slow MA")
 
         self.df["long_entries"] = fast_ma.ma_crossed_above(slow_ma)
         self.df["long_exits"] = fast_ma.ma_crossed_below(slow_ma)
@@ -43,7 +47,7 @@ class DefaultStrategy(BaseStrategy):
         self.df["trade_id"] = self.df["long_entries"].cumsum().astype(int)
 
         # Trailing stop
-        self.df["stops"] = self.df["high"] - (22 * 0.25)
+        self.df["stops"] = self.df["high"] - (p_stop * 0.25)
         self.df.loc[self.df["in_position"] <= 0, "stops"] = None
         self.df["stops"] = self.df.groupby("trade_id")["stops"].cummax()
         self.df["long_exits"] |= self.df["low"] < self.df["stops"]
