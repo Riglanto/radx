@@ -13,7 +13,7 @@ PARAMS = {
     "stop": 33,
     "fast_ma": 20,
     "slow_ma": 55,
-    "trading_hours": [7, 22],
+    "trading_hours": [0, 22],
 }
 
 BACKTESTING_PARAMS = {

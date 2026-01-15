@@ -20,7 +20,6 @@ class DefaultStrategy(BaseStrategy):
         # Trading hours allowed
         th = self.config.trading_hours
         self.df["trading_allowed"] = self.df["time"].dt.hour.between(th[0], th[1], inclusive="left")
-        self.df["trading_allowed"]
 
         self.df["long_entries"] &= self.df["trading_allowed"]
         self.df["long_exits"] &= self.df["trading_allowed"]

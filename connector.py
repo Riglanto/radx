@@ -243,4 +243,10 @@ class Connector:
         df.to_csv(main_csv_name, index=False)
         self._recent_data = main_key
 
+        df.sort_values(by="time", inplace=True)
+
+        # Time index req for vbt plots
+        df.set_index(df["time"], inplace=True)
+        # data fetched, can we get more?
+
         return df

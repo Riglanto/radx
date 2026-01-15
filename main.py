@@ -1,4 +1,7 @@
-from datetime import datetime
+from datetime import datetime, timezone, time, timedelta
+
+from typing import Optional
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 from dotenv import load_dotenv
@@ -33,24 +36,28 @@ def main(strategy: str, ui: bool, stream: bool, backtest: bool, trade: bool):
     symbol, tf = "ES", [3, TIME_UNITS.Minute]
     contract_id = con.find_contract(symbol)
     config = (contract_id, symbol, tf, strategy, stream)
+    times = ["2025-01-01T00:00:00", "2026-01-11T00:00:00"]
 
-    df = con.get_bars(symbol, contract_id, tf=tf, times=["2025-01-01T00:00:00", "2026-01-11T00:00:00"])
-    # df = con.get_bars(contract_id, tf=tf, times=["2025-12-23T00:00:00", "2025-12-25T00:00:00"])
+    ws = Websocket(contract_id, con).run() if stream or trade else None
 
-    df.sort_values(by="time", inplace=True)
+    if trade:
+        now_utc = datetime.now(ZoneInfo(LOCAL_TIMEZONE)).astimezone(timezone.utc)
+        start = (datetime.combine(now_utc, time.min) - timedelta(days=1)).isoformat()  # .replace("10T", "08T")  # ytd midnight
+        end = now_utc.isoformat()  # .replace("11T", "09T")  # now
 
-    # Time index req for vbt plots
-    df.set_index(df["time"], inplace=True)
-    # data fetched, can we get more?
+        print(start, end)
+        times = [start, end]
+    df = con.get_bars(symbol, contract_id, tf=tf, times=times, includePartialBar=stream or trade)
+    # print(df.tail(1))
 
-    if ui:
-        return run_ui(df, con, config)
+    # ws.set_first_timestamp(df.iloc[-1]["time"]) if ws else None
+    # print("First timestamp set to:", ws._first_timestamp) if ws else None
+
+    if ui or trade:
+        return run_ui(df, ws, config, trade)
 
     if backtest:
         return run_backtest(df, config)
-
-    if trade:
-        print("Trading not implemented yet.")
 
 
 def run_backtest(df: pd.DataFrame, config: tuple):
@@ -131,12 +138,13 @@ def build_positions(positions) -> pd.DataFrame:
     return df
 
 
-def run_ui(df: pd.DataFrame, con: Connector, config: tuple):
+def run_ui(df: pd.DataFrame, ws: Websocket, config: tuple, trade: bool):
     (contract_id, symbol, tf, strategy, stream) = config
     title = f"{APP_NAME} - {strategy} - {symbol} - {tf[0]} {tf[1].name} ({LOCAL_TIMEZONE})"
-    ws = Websocket(contract_id, con).run() if stream else None
 
-    stra = StrategyFactory.create(strategy, df, StrategyConfig(trading_hours=[7, 22]))
+    # current_bucket = df["time"].iloc[-1].minute // 3  # 3 min hardcoded
+
+    stra = StrategyFactory.create(strategy, df, StrategyConfig(trading_hours=PARAMS.get("trading_hours", [7, 22])))
     df = stra.run(**PARAMS)
 
     pf = vbt.Portfolio.from_signals(
@@ -164,91 +172,155 @@ def run_ui(df: pd.DataFrame, con: Connector, config: tuple):
 
     trading_hours = stra.config.trading_hours
 
-    @callback(
-        Output("chart", "figure"),
-        Input("date-picker", "date"),
-        Input("trading-hours-slider", "value"),
-    )
-    def update_output(date_value, slider_value):
-        if date_value:
+    if trade:
+
+        @callback(
+            Output("chart", "figure"),
+            Input("interval", "n_intervals"),
+        )
+        def update_output(n_intervals):
+            bucket = ws.pop_bucket()
+            if bucket:
+                print("Popped bucket:", bucket)
+                high = max(bucket)
+                low = min(bucket)
+                open_ = bucket[0]
+                close = bucket[-1]
+
+                last_ts = stra.df.iloc[-1]["time"]
+                print("Last ts:", last_ts)
+                print("Last ts:", last_ts)
+                print("Last ts:", last_ts)
+                print("Last ts:", last_ts)
+                print("Last ts:", last_ts)
+                print("Last ts:", last_ts)
+                stra.df.loc[len(stra.df)] = {
+                    "time": last_ts + pd.Timedelta(minutes=tf[0]),
+                    "open": open_,
+                    "high": high,
+                    "low": low,
+                    "close": close,
+                    "close": stra.df.iloc[-1]["close"],
+                    "trading_allowed": True,
+                }
+
+            # last_row_df["time"] = last_row_df["time"] + pd.Timedelta(minutes=tf[0])
+            # stra.df.loc[len(stra.df)] = last_row_df
+
+            # last_ts = stra.df.iloc[-1]["time"]
+
+            # stra.df.loc[len(stra.df)] = {
+            #     "time": last_ts + pd.Timedelta(minutes=tf[0]),
+            #     "open": stra.df.iloc[-1]["open"],
+            #     "high": stra.df.iloc[-1]["high"],
+            #     "low": stra.df.iloc[-1]["low"],
+            #     "close": stra.df.iloc[-1]["close"],
+            #     "trading_allowed": True,
+            # }
+            # # stra.df = stra.df.iloc[1:]
+
+            # print("time diff", datetime.now(ZoneInfo(LOCAL_TIMEZONE)) - stra.df.tail(1)["time"])
             return build_chart(
                 stra,
-                positions,
-                pd.to_datetime(date_value),
-                slider_value,
+                None,
+                last_day,
+                trading_hours,
                 last_price=ws and ws.last_price,
             )
 
-    @callback(
-        Output("table-records", "data"),
-        Input("date-picker", "date"),
-    )
-    def update_table(date_value):
-        if date_value:
-            return build_table_records(positions, pd.to_datetime(date_value))
+    else:
 
+        @callback(
+            Output("chart", "figure"),
+            Input("date-picker", "date"),
+            Input("trading-hours-slider", "value"),
+        )
+        def update_output(date_value, slider_value):
+            if date_value:
+                print("time diff", stra.df.tail(1)["time"] - datetime.now())
+                return build_chart(
+                    stra,
+                    positions,
+                    pd.to_datetime(date_value),
+                    slider_value,
+                    last_price=ws and ws.last_price,
+                )
+
+        @callback(
+            Output("table-records", "data"),
+            Input("date-picker", "date"),
+        )
+        def update_table(date_value):
+            if date_value:
+                return build_table_records(positions, pd.to_datetime(date_value))
+
+    graph = dcc.Graph(
+        id="chart",
+        figure=build_chart(stra, positions if not trade else None, last_day, trading_hours=trading_hours),
+        style={"height": "85vh"},
+    )
     app.layout = html.Div(
-        [
-            dcc.Interval(id="interval", interval=3 * 1000) if stream else None,  # updates every 3 secs
-            html.Div(
-                children=[
-                    html.H4(
-                        id="header",
-                        children=title,
-                        style={"textAlign": "center", "margin-right": 20},
-                    ),
-                    dcc.DatePickerSingle(
-                        id="date-picker",
-                        date=df["time"].max(),
-                        min_date_allowed=df["time"].min(),
-                        max_date_allowed=df["time"].max(),
-                        display_format="MMM Do, YY",
-                        disabled_days=disabled_dates,
-                        first_day_of_week=1,
-                        clearable=True,
-                        with_portal=True,
-                    ),
-                ],
-                style={"display": "flex", "justifyContent": "center"},
-            ),
-            dcc.RangeSlider(0, 24, 1, value=trading_hours, id="trading-hours-slider"),
-            html.Div(
-                children=[
-                    dcc.Graph(id="summary_chart", figure=summary_fig),
-                    html.Div(
-                        children=[
-                            dcc.Graph(
-                                id="chart",
-                                figure=build_chart(stra, positions, last_day, trading_hours=trading_hours),
-                                style={"height": "85vh"},
-                            ),
-                            html.H6(children=f"Buys {pf.orders.buy.count()}, Sells {pf.orders.sell.count()}"),
-                        ],
-                        style={"flex": 1},
-                    ),
-                ],
-                style={"display": "flex"},
-            ),
-            dash_table.DataTable(
-                data=build_table_records(positions, last_day),
-                columns=[
-                    {"name": i, "id": i}
-                    for i in [
-                        "Direction",
-                        "Size",
-                        "PnL",
-                        "Entry Timestamp",
-                        "Avg Entry Price",
-                        "Exit Timestamp",
-                        "Avg Exit Price",
-                        "Ticks",
-                        "Gain",
-                        "Status",
-                    ]
-                ],
-                id="table-records",
-            ),
-        ],
+        (
+            [dcc.Interval(id="interval", interval=1000), graph]
+            if trade
+            else [
+                dcc.Interval(id="interval", interval=3 * 1000) if stream else None,  # updates every 3 secs
+                html.Div(
+                    children=[
+                        html.H4(
+                            id="header",
+                            children=title,
+                            style={"textAlign": "center", "margin-right": 20},
+                        ),
+                        dcc.DatePickerSingle(
+                            id="date-picker",
+                            date=df["time"].max(),
+                            min_date_allowed=df["time"].min(),
+                            max_date_allowed=df["time"].max(),
+                            display_format="MMM Do, YY",
+                            disabled_days=disabled_dates,
+                            first_day_of_week=1,
+                            clearable=True,
+                            with_portal=True,
+                        ),
+                    ],
+                    style={"display": "flex", "justifyContent": "center"},
+                ),
+                dcc.RangeSlider(0, 24, 1, value=trading_hours, id="trading-hours-slider"),
+                html.Div(
+                    children=[
+                        dcc.Graph(id="summary_chart", figure=summary_fig),
+                        html.Div(
+                            children=[
+                                graph,
+                                html.H6(children=f"Buys {pf.orders.buy.count()}, Sells {pf.orders.sell.count()}"),
+                            ],
+                            style={"flex": 1},
+                        ),
+                    ],
+                    style={"display": "flex"},
+                ),
+                dash_table.DataTable(
+                    data=build_table_records(positions, last_day),
+                    columns=[
+                        {"name": i, "id": i}
+                        for i in [
+                            "Direction",
+                            "Size",
+                            "PnL",
+                            "Entry Timestamp",
+                            "Avg Entry Price",
+                            "Exit Timestamp",
+                            "Avg Exit Price",
+                            "Ticks",
+                            "Gain",
+                            "Status",
+                        ]
+                    ],
+                    id="table-records",
+                ),
+            ]
+        ),
     )
 
     app.run()
@@ -265,7 +337,7 @@ def build_table_records(df, date):
 
 def build_chart(
     stra: BaseStrategy,
-    positions: pd.DataFrame,
+    positions: Optional[pd.DataFrame],
     date=datetime.today(),
     trading_hours: tuple[int, int] = [],
     last_price: float = None,
@@ -273,13 +345,49 @@ def build_chart(
     df = stra.df
     df = df[df["time"].dt.date == date.date()]
 
-    df = pd.merge(df, positions, left_on="t_original", right_on="Exit Timestamp", how="left")
+    positions_scatters = []
+    if positions is not None:
+        df = pd.merge(df, positions, left_on="t_original", right_on="Exit Timestamp", how="left")
+        long_entries = df[df["Entry Timestamp"].notna()]
+        long_exits = df[df["Exit Timestamp"].notna()]
+        positions_scatters = [
+            go.Scatter(
+                x=long_entries["Entry Timestamp"],
+                y=long_entries["Avg Entry Price"],
+                mode="markers",
+                name="Buys",
+                text="Buy",
+                marker=dict(
+                    color="green",
+                    size=20,
+                    symbol="triangle-up",
+                ),
+                textposition="bottom center",
+            ),
+            go.Scatter(
+                x=df["time"],
+                y=df["stops"],
+                mode="lines",
+                name="Stop",
+                line=dict(color="black", width=1),
+            ),
+            go.Scatter(
+                x=long_exits["Exit Timestamp"],
+                y=long_exits["Avg Exit Price"],
+                mode="markers",
+                name="Sell",
+                text=long_exits["Ticks"].apply(lambda x: f"Sell {x:+0.0f}"),
+                marker=dict(
+                    color="red",
+                    size=20,
+                    symbol="triangle-down",
+                ),
+                textposition="top center",
+            ),
+        ]
 
     if trading_hours:
-        df = df[(df["time"].dt.hour >= (trading_hours[0] - 1) % 25) & (df["time"].dt.hour <= trading_hours[1])]
-
-    long_entries = df[df["Entry Timestamp"].notna()]
-    long_exits = df[df["Exit Timestamp"].notna()]
+        df = df[(df["time"].dt.hour >= max((trading_hours[0] - 1), 0) % 25) & (df["time"].dt.hour <= trading_hours[1])]
 
     indicators = map(
         lambda ind: go.Scatter(
@@ -303,40 +411,8 @@ def build_chart(
                 name="Price",
             ),
             *indicators,
-            go.Scatter(
-                x=df["time"],
-                y=df["stops"],
-                mode="lines",
-                name="Stop",
-                line=dict(color="black", width=1),
-            ),
-            go.Scatter(
-                x=long_entries["Entry Timestamp"],
-                y=long_entries["Avg Entry Price"],
-                mode="markers",
-                name="Buys",
-                text="Buy",
-                marker=dict(
-                    color="green",
-                    size=20,
-                    symbol="triangle-up",
-                ),
-                textposition="bottom center",
-            ),
-            go.Scatter(
-                x=long_exits["Exit Timestamp"],
-                y=long_exits["Avg Exit Price"],
-                mode="markers",
-                name="Sell",
-                text=long_exits["Ticks"].apply(lambda x: f"Sell {x:+0.0f}"),
-                marker=dict(
-                    color="red",
-                    size=20,
-                    symbol="triangle-down",
-                ),
-                textposition="top center",
-            ),
-        ]
+            *positions_scatters,
+        ],
     )
 
     trading_allowed = df[df["trading_allowed"]]
