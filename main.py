@@ -171,6 +171,7 @@ def run_ui(df: pd.DataFrame, ws: Websocket, config: tuple, trade: bool):
     disabled_dates = sorted(set(all_dates.date) - set(pd.to_datetime(present_dates).date))
 
     trading_hours = stra.config.trading_hours
+    time_delta = pd.Timedelta(minutes=tf[0])
 
     if trade:
 
@@ -179,47 +180,31 @@ def run_ui(df: pd.DataFrame, ws: Websocket, config: tuple, trade: bool):
             Input("interval", "n_intervals"),
         )
         def update_output(n_intervals):
-            bucket = ws.pop_bucket()
+            bucket, candles_poped = ws.pop_bucket()
             if bucket:
-                print("Popped bucket:", bucket)
                 high = max(bucket)
                 low = min(bucket)
                 open_ = bucket[0]
                 close = bucket[-1]
 
                 last_ts = stra.df.iloc[-1]["time"]
-                print("Last ts:", last_ts)
-                print("Last ts:", last_ts)
-                print("Last ts:", last_ts)
-                print("Last ts:", last_ts)
-                print("Last ts:", last_ts)
-                print("Last ts:", last_ts)
-                stra.df.loc[len(stra.df)] = {
-                    "time": last_ts + pd.Timedelta(minutes=tf[0]),
-                    "open": open_,
-                    "high": high,
-                    "low": low,
-                    "close": close,
-                    "close": stra.df.iloc[-1]["close"],
-                    "trading_allowed": True,
-                }
+                if candles_poped == 1:  # Updates first partial candle
+                    partial_candle = stra.df.iloc[-1].copy()
+                    last_idx = stra.df.index[-1]
+                    stra.df.at[last_idx, "high"] = max(partial_candle["high"], high)
+                    stra.df.at[last_idx, "low"] = min(partial_candle["low"], low)
+                    stra.df.at[last_idx, "close"] = close
+                else:
+                    stra.df.loc[len(stra.df)] = {
+                        "time": last_ts + time_delta,
+                        "open": open_,
+                        "high": high,
+                        "low": low,
+                        "close": close,
+                        # "close": stra.df.iloc[-1]["close"],
+                        "trading_allowed": True,
+                    }
 
-            # last_row_df["time"] = last_row_df["time"] + pd.Timedelta(minutes=tf[0])
-            # stra.df.loc[len(stra.df)] = last_row_df
-
-            # last_ts = stra.df.iloc[-1]["time"]
-
-            # stra.df.loc[len(stra.df)] = {
-            #     "time": last_ts + pd.Timedelta(minutes=tf[0]),
-            #     "open": stra.df.iloc[-1]["open"],
-            #     "high": stra.df.iloc[-1]["high"],
-            #     "low": stra.df.iloc[-1]["low"],
-            #     "close": stra.df.iloc[-1]["close"],
-            #     "trading_allowed": True,
-            # }
-            # # stra.df = stra.df.iloc[1:]
-
-            # print("time diff", datetime.now(ZoneInfo(LOCAL_TIMEZONE)) - stra.df.tail(1)["time"])
             return build_chart(
                 stra,
                 None,
@@ -419,13 +404,14 @@ def build_chart(
 
     fig.add_vline(
         x=trading_allowed.iloc[0]["time"],
-        line_width=1,
+        line_width=2,
         line_dash="dash",
         line_color="green",
     )
 
+    time_delta = pd.Timedelta(minutes=3)
     fig.add_vline(
-        x=trading_allowed.iloc[-1]["time"],
+        x=trading_allowed.iloc[-1]["time"] + time_delta,
         line_width=1,
         line_dash="dash",
         line_color="red",
@@ -440,7 +426,15 @@ def build_chart(
             annotation_text=f"Last Price {last_price}",
             annotation_position="top left",
         )
-    fig.update_layout(xaxis_rangeslider_visible=False)
+    fig.update_layout(
+        xaxis_rangeslider_visible=False,
+        yaxis=dict(side="right"),
+    )
+
+    if not df.empty:
+        pad = time_delta * 3
+        fig.update_xaxes(range=[df["time"].min(), df["time"].max() + pad])
+
     return fig
 
 

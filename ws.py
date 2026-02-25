@@ -14,6 +14,7 @@ class Websocket:
     symbol: str
     last_price: float = None
     _connector: Connector = None
+    _candles_poped = 0
 
     def __init__(self, symbol: str, connector: Connector):
         self.symbol = symbol
@@ -37,11 +38,12 @@ class Websocket:
         try:
             self.buckets_set.remove(last_bucket)
         except KeyError:
-            return None
+            return None, None
 
         data = self.buckets.get(last_bucket)
         self.buckets[last_bucket] = []
-        return data
+        self._candles_poped += 1
+        return data, self._candles_poped
 
     def run(self):
         hub_connection = (
@@ -66,8 +68,7 @@ class Websocket:
         )
 
         def handle_trade(data):
-            symbol, trades = data
-            print(trades)
+            _symbol, trades = data
 
             prices = [t["price"] for t in trades]
 
@@ -75,16 +76,6 @@ class Websocket:
             self.buckets_set.add(bucket)
             self.buckets[bucket].extend(prices)
 
-            # if self.is_first_timestamp:
-            #     print("x")
-            #     ts = datetime.fromisoformat(trades[0]["timestamp"])
-            #     diff = ts - self._first_timestamp
-            #     print("First timestamp check", diff)
-
-            #     if diff > timedelta.minutes(3):
-            #         self.is_first_timestamp = False
-
-            # print(diff)
             self.last_price = trades[0]["price"]
 
         def subscribe():
