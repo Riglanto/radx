@@ -30,20 +30,27 @@ class Websocket:
         if not self._first_timestamp:
             self._first_timestamp = ts
 
-    def pop_bucket(self) -> Optional[list[float]]:
-
+    def _get_bucket_index(self, offset=0) -> int:
         bucket_now = datetime.now().minute // 3
-        last_bucket = (bucket_now - 1) % 20
+        return (bucket_now - offset) % 20
+
+    def pop_bucket(self) -> tuple[Optional[list[float]], int]:
+
+        last_bucket = self._get_bucket_index(offset=1)
 
         try:
             self.buckets_set.remove(last_bucket)
         except KeyError:
-            return None, None
+            return None, -1
 
         data = self.buckets.get(last_bucket)
         self.buckets[last_bucket] = []
         self._candles_poped += 1
         return data, self._candles_poped
+
+    def get_current_bucket(self):
+        current_bucket = self._get_bucket_index(offset=0)
+        return self.buckets[current_bucket]
 
     def run(self):
         hub_connection = (

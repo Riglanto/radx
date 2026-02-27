@@ -10,9 +10,9 @@ LOCAL_TIMEZONE = "Europe/Berlin"
 
 # Params
 PARAMS = {
-    "stop": 33,
-    "fast_ma": 20,
-    "slow_ma": 55,
+    "stop": 22,  # 33,
+    "fast_ma": 8,  # 20,
+    "slow_ma": 34,  # 55,
     "trading_hours": [0, 22],
 }
 

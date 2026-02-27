@@ -17,3 +17,4 @@ test.html
 *.bak
 _data
 _results
+_logs

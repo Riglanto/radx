@@ -1,8 +1,24 @@
-from typing import List, Tuple
+from typing import Any, List, Tuple
+from enum import Enum
 
 import pandas as pd
 import os
 import importlib
+
+
+class ActionType(Enum):
+    BUY = "BUY"
+    SELL = "SELL"
+    CLOSE = "CLOSE"
+
+
+IMPL_ERROR = NotImplementedError("Strategy must implement the method.")
+
+
+class Action:
+    def __init__(self, action_type: ActionType, stop: int):
+        self.action_type = action_type
+        self.stop = stop
 
 
 class DrawableIndicator:
@@ -24,13 +40,17 @@ class BaseStrategy:
     df: pd.DataFrame
     drawable_indicators: List[DrawableIndicator] = []
     config: StrategyConfig
+    _params: dict[str, Any]
 
     def __init__(self, df: pd.DataFrame, config: StrategyConfig):
         self.df = df.copy()
         self.config = config
 
     def run(self, **params) -> pd.DataFrame:
-        raise NotImplementedError("Strategy must implement the run method.")
+        raise IMPL_ERROR
+
+    def update(self) -> pd.DataFrame:
+        raise IMPL_ERROR
 
 
 class StrategyFactory:

@@ -21,6 +21,13 @@ from ws import Websocket
 
 from strategies import BaseStrategy, StrategyFactory, StrategyConfig
 
+from logger import create_logger
+import chime
+import logging
+
+chime.theme("zelda")
+logging.getLogger("werkzeug").setLevel(logging.ERROR)
+log = create_logger(__name__)
 load_dotenv()
 
 
@@ -31,12 +38,15 @@ load_dotenv()
 @click.option("--backtest", default=False, is_flag=True, help="Backtesting.")
 @click.option("--trade", default=False, is_flag=True, help="Trade.")
 def main(strategy: str, ui: bool, stream: bool, backtest: bool, trade: bool):
+    log.info(f"Starting with strategy={strategy}, ui={ui}, stream={stream}, backtest={backtest}, trade={trade}")
+    chime.info()
+
     con = Connector()
 
     symbol, tf = "ES", [3, TIME_UNITS.Minute]
     contract_id = con.find_contract(symbol)
     config = (contract_id, symbol, tf, strategy, stream)
-    times = ["2025-01-01T00:00:00", "2026-01-11T00:00:00"]
+    times = ["2025-01-01T00:00:00", "2026-02-28T00:00:00"]
 
     ws = Websocket(contract_id, con).run() if stream or trade else None
 
@@ -45,13 +55,8 @@ def main(strategy: str, ui: bool, stream: bool, backtest: bool, trade: bool):
         start = (datetime.combine(now_utc, time.min) - timedelta(days=1)).isoformat()  # .replace("10T", "08T")  # ytd midnight
         end = now_utc.isoformat()  # .replace("11T", "09T")  # now
 
-        print(start, end)
         times = [start, end]
     df = con.get_bars(symbol, contract_id, tf=tf, times=times, includePartialBar=stream or trade)
-    # print(df.tail(1))
-
-    # ws.set_first_timestamp(df.iloc[-1]["time"]) if ws else None
-    # print("First timestamp set to:", ws._first_timestamp) if ws else None
 
     if ui or trade:
         return run_ui(df, ws, config, trade)
@@ -142,8 +147,6 @@ def run_ui(df: pd.DataFrame, ws: Websocket, config: tuple, trade: bool):
     (contract_id, symbol, tf, strategy, stream) = config
     title = f"{APP_NAME} - {strategy} - {symbol} - {tf[0]} {tf[1].name} ({LOCAL_TIMEZONE})"
 
-    # current_bucket = df["time"].iloc[-1].minute // 3  # 3 min hardcoded
-
     stra = StrategyFactory.create(strategy, df, StrategyConfig(trading_hours=PARAMS.get("trading_hours", [7, 22])))
     df = stra.run(**PARAMS)
 
@@ -175,6 +178,13 @@ def run_ui(df: pd.DataFrame, ws: Websocket, config: tuple, trade: bool):
 
     if trade:
 
+        def _build_candle(bucket):
+            open_ = bucket[0]
+            high = max(bucket)
+            low = min(bucket)
+            close = bucket[-1]
+            return open_, high, low, close
+
         @callback(
             Output("chart", "figure"),
             Input("interval", "n_intervals"),
@@ -182,11 +192,9 @@ def run_ui(df: pd.DataFrame, ws: Websocket, config: tuple, trade: bool):
         def update_output(n_intervals):
             bucket, candles_poped = ws.pop_bucket()
             if bucket:
-                high = max(bucket)
-                low = min(bucket)
-                open_ = bucket[0]
-                close = bucket[-1]
+                open_, high, low, close = _build_candle(bucket)
 
+                log.info(candles_poped)
                 last_ts = stra.df.iloc[-1]["time"]
                 if candles_poped == 1:  # Updates first partial candle
                     partial_candle = stra.df.iloc[-1].copy()
@@ -205,12 +213,16 @@ def run_ui(df: pd.DataFrame, ws: Websocket, config: tuple, trade: bool):
                         "trading_allowed": True,
                     }
 
+                # Update strategy
+                action = stra.update()
+                if action:
+                    log.info(f"Action: {action.action_type}, Stop: {action.stop}")
+                    chime.success()
+
+            active = ws.get_current_bucket()
+
             return build_chart(
-                stra,
-                None,
-                last_day,
-                trading_hours,
-                last_price=ws and ws.last_price,
+                stra, positions, last_day, trading_hours, last_price=ws and ws.last_price, active=active and _build_candle(active)  # None,
             )
 
     else:
@@ -222,7 +234,6 @@ def run_ui(df: pd.DataFrame, ws: Websocket, config: tuple, trade: bool):
         )
         def update_output(date_value, slider_value):
             if date_value:
-                print("time diff", stra.df.tail(1)["time"] - datetime.now())
                 return build_chart(
                     stra,
                     positions,
@@ -249,7 +260,7 @@ def run_ui(df: pd.DataFrame, ws: Websocket, config: tuple, trade: bool):
             [dcc.Interval(id="interval", interval=1000), graph]
             if trade
             else [
-                dcc.Interval(id="interval", interval=3 * 1000) if stream else None,  # updates every 3 secs
+                dcc.Interval(id="interval", interval=1 * 1000) if stream else None,  # updates every 1 secs
                 html.Div(
                     children=[
                         html.H4(
@@ -326,9 +337,12 @@ def build_chart(
     date=datetime.today(),
     trading_hours: tuple[int, int] = [],
     last_price: float = None,
+    active: Optional[tuple[float, float, float, float]] = None,
 ) -> go.Figure:
     df = stra.df
     df = df[df["time"].dt.date == date.date()]
+
+    time_delta = pd.Timedelta(minutes=3)
 
     positions_scatters = []
     if positions is not None:
@@ -385,6 +399,24 @@ def build_chart(
         stra.drawable_indicators,
     )
 
+    def active_candle():
+        if not active:
+            return []
+
+        open_, high, low, close = active
+        return [
+            go.Candlestick(
+                x=df.tail(1)["time"] + time_delta,
+                high=[high],
+                low=[low],
+                open=[open_],
+                close=[close],
+                name="Active",
+                increasing_line_color="gray",
+                decreasing_line_color="gray",
+            ),
+        ]
+
     fig = go.Figure(
         data=[
             go.Candlestick(
@@ -395,6 +427,7 @@ def build_chart(
                 close=df["close"],
                 name="Price",
             ),
+            *active_candle(),
             *indicators,
             *positions_scatters,
         ],
@@ -409,13 +442,13 @@ def build_chart(
         line_color="green",
     )
 
-    time_delta = pd.Timedelta(minutes=3)
-    fig.add_vline(
-        x=trading_allowed.iloc[-1]["time"] + time_delta,
-        line_width=1,
-        line_dash="dash",
-        line_color="red",
-    )
+    if not active:
+        fig.add_vline(
+            x=trading_allowed.iloc[-1]["time"] + time_delta,
+            line_width=1,
+            line_dash="dash",
+            line_color="red",
+        )
 
     if last_price:
         fig.add_hline(

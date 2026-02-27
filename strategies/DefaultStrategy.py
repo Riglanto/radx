@@ -1,12 +1,16 @@
+from typing import Optional
+
 import pandas as pd
 import vectorbt as vbt
 import numpy as np
 
-from strategies import BaseStrategy, DrawableIndicator
+from strategies import BaseStrategy, DrawableIndicator, ActionType, Action
 
 
 class DefaultStrategy(BaseStrategy):
     def run(self, **params) -> pd.DataFrame:
+        self._params = params
+
         p_stop = params.get("stop", 22)
         p_fast_ma = params.get("fast_ma", 8)
         p_slow_ma = params.get("slow_ma", 34)
@@ -58,3 +62,17 @@ class DefaultStrategy(BaseStrategy):
         ]
 
         return self.df
+
+    def update(self) -> Optional[Action]:
+        # For this simple strategy, we can just re-run the entire logic on the updated dataframe
+        self.run(**self._params)
+
+        last = self.df.iloc[-1]
+
+        stop = int(last["stops"]) if pd.notna(last["stops"]) else 0
+        if last["long_entries"]:
+            return Action(ActionType.BUY, stop)
+        if last["long_exits"]:
+            return Action(ActionType.CLOSE, stop)
+
+        return None
