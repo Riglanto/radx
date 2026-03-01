@@ -3,14 +3,17 @@ import os
 from enum import Enum
 from datetime import datetime, timedelta
 import json
-import logging
 
 import pandas as pd
 from dotenv import load_dotenv
 
-import vectorbt as vbt
+from logger import create_logger
 
 from config import API_URL, LIVE_DATA, LOCAL_TIMEZONE
+from logger import create_logger
+from strategies import ActionType
+
+log = create_logger(__name__)
 
 
 class TIME_UNITS(Enum):
@@ -41,8 +44,11 @@ class Connector:
     _session: requests.Session = None
     _token: str = None
     _recent_data: str = None
+    _account_id: str = None
+    _recent_contract_id: str = None
 
     def __init__(self):
+        self._account_id = os.getenv("TOPSTEP_ACCOUNT_ID")
         self._login()
 
     def _store_token(self, token: str):
@@ -90,7 +96,7 @@ class Connector:
                 },
             )
 
-            data = res.json()
+            data = res
             if not data["success"]:
                 print("Error", data)
                 return
@@ -103,12 +109,7 @@ class Connector:
         self._token = token
 
     def revalidate(self):
-        res = self._post("Auth/validate")
-
-        data = res.json()
-        if not data["success"]:
-            print("Error", data)
-            return
+        data = self._post("Auth/validate")
 
         token = data["newToken"]
         self._session.headers = {"Authorization": f"Bearer {token}"}
@@ -117,21 +118,34 @@ class Connector:
         print("Token saved l=", len(token))
 
     def _post(self, url: str, json: dict = {}):
-        return self._session.post(f"{API_URL}/api/{url}", json=json)
+        api_url = f"{API_URL}/api/{url}"
+        log.info(f"POST {API_URL} with {json}")
+        res = self._session.post(api_url, json=json)
+        if not res.ok:
+            raise Exception(f"Error posting to {url}: {res.status_code}, {res.text}")
+
+        json_res = res.json()
+        if not json_res.get("success", False):
+            log.error(json_res)
+            raise Exception(
+                f"Error in response from {url}: {json_res.get('errorCode', 'Unknown')} -> {json_res.get('errorMessage', 'No error message')}"
+            )
+        return json_res
 
     def get_accounts(self):
-        res = self._post("account/search", {"onlyActiveAccounts": True})
-        return res.json()["accounts"]
+        data = self._post("account/search", {"onlyActiveAccounts": True})
+        return data["accounts"]
 
     def get_contracts(self, text="ES"):
-        res = self._post("contract/search", {"live": LIVE_DATA, "searchText": text})
-        return res.json()["contracts"]
+        data = self._post("contract/search", {"live": LIVE_DATA, "searchText": text})
+        return data["contracts"]
 
     def find_contract(self, text="ES"):
         contracts = self.get_contracts(text)
         result = next((c for c in contracts if c["name"].startswith(text)), None)
         if result:
-            return result["id"]
+            self._recent_contract_id = result["id"]
+            return self._recent_contract_id
 
         raise ValueError(f"Contract {text} not found")
 
@@ -178,7 +192,7 @@ class Connector:
 
                     continue
 
-                res = self._post(
+                data = self._post(
                     "History/retrieveBars",
                     {
                         "contractId": contract,
@@ -192,7 +206,7 @@ class Connector:
                     },
                 )
 
-                bars = res.json()["bars"]
+                bars = data["bars"]
 
                 if len(bars) == 0:
                     print("No bars returned from API for", contract)
@@ -250,3 +264,42 @@ class Connector:
         # data fetched, can we get more?
 
         return df
+
+    def get_open_orders(self):
+        data = self._post("Order/searchOpen", {"accountId": self._account_id})
+        return data["orders"]
+
+    def get_orders(self):
+        data = self._post(
+            "Order/search",
+            {
+                "accountId": self._account_id,
+                "startTimestamp": (datetime.now() - timedelta(days=1)).isoformat(),
+            },
+        )
+        return data["orders"]
+
+    def get_open_positions(self):
+        data = self._post("Position/searchOpen", {"accountId": self._account_id})
+        return data["positions"]
+
+    # Execution
+
+    def close_positions(self, contract_id: str) -> bool:
+        data = self._post("Position/searchOpen", {"accountId": self._account_id, "contractId": contract_id})
+        return data["success"]
+
+    def place_order(self, contract_id: str, side: ActionType, size: int, stopPrice: float, is_trail=True) -> bool:
+        data = self._post(
+            "Order/place",
+            {
+                "accountId": self._account_id,
+                "contractId": contract_id,
+                "type": 2,  # Market order
+                "side": 0 if side == ActionType.BUY else 1,
+                "size": size,
+                "stopPrice": stopPrice,
+                "isTrail": stopPrice if is_trail else None,
+            },
+        )
+        return data["success"]

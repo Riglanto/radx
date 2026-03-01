@@ -30,12 +30,23 @@ def test_update():
     assert df["in_position"].value_counts()[1] == 30
     assert df["trade_id"].value_counts()[1] == 30
 
-    stra.df = pd.concat([stra.df, raw_data.iloc[94:95]], ignore_index=True, sort=False)
+    # Adds row
+    stra.df = pd.concat([stra.df, raw_data.iloc[94:95]])
 
     action = stra.update()
     assert action.action_type == ActionType.CLOSE
 
     # Keep updating exit
+    df = stra.df
+    assert df["in_position"].value_counts()[1] == 31
+
+    # Adds remaining rows
+    stra.df = pd.concat([stra.df, raw_data.iloc[95:]])
+
+    action = stra.update()
+    assert not action
+
+    # Unchanged
     df = stra.df
     assert df["in_position"].value_counts()[1] == 31
 
