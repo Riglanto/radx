@@ -1,4 +1,4 @@
-from typing import Any, List, Tuple
+from typing import Any, List, Optional, Tuple
 from enum import Enum
 
 import pandas as pd
@@ -49,7 +49,7 @@ class BaseStrategy:
     def run(self, **params) -> pd.DataFrame:
         raise IMPL_ERROR
 
-    def update(self) -> pd.DataFrame:
+    def update(self) -> Optional[Action]:
         raise IMPL_ERROR
 
 

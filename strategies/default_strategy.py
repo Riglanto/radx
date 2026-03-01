@@ -46,20 +46,24 @@ class DefaultStrategy(BaseStrategy):
         self.df["slow_ma"] = slow_ma.ma
 
         # In position and trade id
-        self.df["in_position"] = self.df["long_entries"].cumsum() - self.df["long_exits"].cumsum()
-        self.df["trade_id"] = self.df["long_entries"].cumsum().astype(int)
+        self.df["in_position"] = self.df["long_entries"].cumsum() - self.df["long_exits"].shift(1).fillna(0).cumsum()
+        self.df["trade_id"] = (self.df["long_entries"].cumsum() * (self.df["in_position"] > 0)).astype(int)
 
         # Trailing stop
         self.df["stops"] = self.df["high"] - (p_stop * 0.25)
         self.df.loc[self.df["in_position"] <= 0, "stops"] = None
         self.df["stops"] = self.df.groupby("trade_id")["stops"].cummax()
         self.df["long_exits"] |= self.df["low"] < self.df["stops"]
+        self.df.loc[~self.df["in_position"].astype(bool), "long_exits"] = False
 
         # Drawables
         self.drawable_indicators = [
             DrawableIndicator("fast_ma", "lines", "purple", 1),
             DrawableIndicator("slow_ma", "lines", "blue", 1),
         ]
+
+        # print("Strategy run complete. DataFrame head:")
+        # print(self.df.tail(10).to_csv(header=True))
 
         return self.df
 

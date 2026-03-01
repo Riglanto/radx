@@ -17,15 +17,14 @@ from tqdm import tqdm
 
 from config import LOCAL_TIMEZONE, APP_NAME, PARAMS, BACKTESTING_PARAMS
 from connector import TIME_UNITS, Connector
+from trading.trader import Trader
 from ws import Websocket
 
 from strategies import BaseStrategy, StrategyFactory, StrategyConfig
 
 from logger import create_logger
-import chime
 import logging
 
-chime.theme("zelda")
 logging.getLogger("werkzeug").setLevel(logging.ERROR)
 log = create_logger(__name__)
 load_dotenv()
@@ -39,14 +38,13 @@ load_dotenv()
 @click.option("--trade", default=False, is_flag=True, help="Trade.")
 def main(strategy: str, ui: bool, stream: bool, backtest: bool, trade: bool):
     log.info(f"Starting with strategy={strategy}, ui={ui}, stream={stream}, backtest={backtest}, trade={trade}")
-    chime.info()
 
     con = Connector()
 
     symbol, tf = "ES", [3, TIME_UNITS.Minute]
     contract_id = con.find_contract(symbol)
     config = (contract_id, symbol, tf, strategy, stream)
-    times = ["2025-01-01T00:00:00", "2026-02-28T00:00:00"]
+    times = ["2025-01-01T00:00:00", "2026-03-01T00:00:00"]
 
     ws = Websocket(contract_id, con).run() if stream or trade else None
 
@@ -57,6 +55,7 @@ def main(strategy: str, ui: bool, stream: bool, backtest: bool, trade: bool):
 
         times = [start, end]
     df = con.get_bars(symbol, contract_id, tf=tf, times=times, includePartialBar=stream or trade)
+    print(df.to_csv(header=True, index=False))
 
     if ui or trade:
         return run_ui(df, ws, config, trade)
@@ -178,6 +177,8 @@ def run_ui(df: pd.DataFrame, ws: Websocket, config: tuple, trade: bool):
 
     if trade:
 
+        trader = Trader()
+
         def _build_candle(bucket):
             open_ = bucket[0]
             high = max(bucket)
@@ -213,11 +214,11 @@ def run_ui(df: pd.DataFrame, ws: Websocket, config: tuple, trade: bool):
                         "trading_allowed": True,
                     }
 
-                # Update strategy
-                action = stra.update()
-                if action:
-                    log.info(f"Action: {action.action_type}, Stop: {action.stop}")
-                    chime.success()
+                    # Update strategy
+                    action = stra.update()
+                    if action:
+                        log.info(f"Action: {action.action_type}, Stop: {action.stop}")
+                        trader.execute(action)
 
             active = ws.get_current_bucket()
 
