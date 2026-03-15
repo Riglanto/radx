@@ -16,7 +16,7 @@ IMPL_ERROR = NotImplementedError("Strategy must implement the method.")
 
 
 class Action:
-    def __init__(self, action_type: ActionType, stop: int):
+    def __init__(self, action_type: ActionType, stop: Optional[float] = None):
         self.action_type = action_type
         self.stop = stop
 

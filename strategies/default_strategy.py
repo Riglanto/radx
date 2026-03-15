@@ -33,28 +33,37 @@ class DefaultStrategy(BaseStrategy):
         signals = self.df[self.df["long_entries"] | self.df["long_exits"]]
 
         # First signal of the day cannot be the exit
-        first_signals = signals.groupby("date").first()
-        is_first_exit = first_signals[first_signals["long_exits"]]["time"]
+        signals_by_date = signals.groupby("date").first()
+        is_first_exit = signals_by_date[signals_by_date["long_exits"]]["time"]
         self.df.loc[self.df["time"].isin(is_first_exit), "long_exits"] = False
 
-        last_signals = signals.groupby("date").last()
-        is_last_entry = last_signals[last_signals["long_entries"]]
-        last_bars = self.df[self.df["trading_allowed"]].groupby("date").last()
-        self.df.loc[self.df["date"].isin(is_last_entry["time"].dt.date) & self.df["time"].isin(last_bars["time"]), "long_exits"] = True
+        # Last trading hour: force exit if in position
+        entries_cs = np.cumsum(self.df["long_entries"].astype(int).values)
+        exits_cs = np.cumsum(self.df["long_exits"].astype(int).values)
+        valid_exits_cs = np.minimum(exits_cs, entries_cs)
+        in_position_prior = entries_cs - valid_exits_cs
 
         self.df["fast_ma"] = fast_ma.ma
         self.df["slow_ma"] = slow_ma.ma
 
-        # In position and trade id
-        self.df["in_position"] = self.df["long_entries"].cumsum() - self.df["long_exits"].shift(1).fillna(0).cumsum()
+        last_bars = self.df[self.df["trading_allowed"]].groupby("date").last()
+        self.df.loc[self.df["time"].isin(last_bars["time"]) & (in_position_prior > 0), "long_exits"] = True
+
+        # Recompute in position and trade id after forced last-hour exits
+        entries_cs = np.cumsum(self.df["long_entries"].astype(int).values)
+        exits_cs = np.cumsum(self.df["long_exits"].astype(int).values)
+        valid_exits_cs = np.minimum(exits_cs, entries_cs)
+
+        # Keep position true on the exit bar; close on next bar
+        self.df["in_position"] = entries_cs - pd.Series(valid_exits_cs).shift(1, fill_value=0).values
         self.df["trade_id"] = (self.df["long_entries"].cumsum() * (self.df["in_position"] > 0)).astype(int)
 
         # Trailing stop
+        self.df["stops"] = None
         self.df["stops"] = self.df["high"] - (p_stop * 0.25)
         self.df.loc[self.df["in_position"] <= 0, "stops"] = None
         self.df["stops"] = self.df.groupby("trade_id")["stops"].cummax()
-        self.df["long_exits"] |= self.df["low"] < self.df["stops"]
-        self.df.loc[~self.df["in_position"].astype(bool), "long_exits"] = False
+        self.df["stop_signals"] = self.df["low"] <= self.df["stops"]
 
         # Drawables
         self.drawable_indicators = [
@@ -62,12 +71,12 @@ class DefaultStrategy(BaseStrategy):
             DrawableIndicator("slow_ma", "lines", "blue", 1),
         ]
 
-        # print("Strategy run complete. DataFrame head:")
-        # print(self.df.tail(10).to_csv(header=True))
-
         return self.df
 
     def update(self) -> Optional[Action]:
+        # Clean previous output
+        self.df = self.df[["time", "open", "high", "low", "close", "volume", "t_original"]]
+
         # For this simple strategy, we can just re-run the entire logic on the updated dataframe
         self.run(**self._params)
 
@@ -77,6 +86,6 @@ class DefaultStrategy(BaseStrategy):
         if last["long_entries"]:
             return Action(ActionType.BUY, stop)
         if last["long_exits"]:
-            return Action(ActionType.CLOSE, stop)
+            return Action(ActionType.CLOSE)
 
         return None

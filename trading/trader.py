@@ -1,3 +1,4 @@
+from connector import Connector
 from strategies import Action, ActionType
 
 import logging
@@ -12,25 +13,31 @@ log = create_logger(__name__)
 
 class Trader:
     in_position: bool = False
+    contract_id: str = None
 
-    def __init__(self):
-        pass
+    _connector: Connector = None
+
+    def __init__(self, contract_id: str, connector: Connector):
+        self.contract_id = contract_id
+        self._connector = connector
 
     def execute(self, action: Action):
 
+        action_type, stop_price = action.action_type, action.stop
+
         if self.in_position:
 
-            if action.action_type == ActionType.CLOSE:
-                # CLOSE
+            if action_type == ActionType.CLOSE:
                 print("Closing position")
-            # CLOSE
             pass
         else:
             # OPEN
-            if action.action_type == ActionType.BUY:
+            if action_type == ActionType.BUY:
                 print("Opening position")
+                self._connector.place_order(self.contract_id, ActionType.BUY, size=1, stop_price=stop_price, is_trail=True)
                 chime.success()
 
-            elif action.action_type == ActionType.SELL:
+            elif action_type == ActionType.SELL:
                 print("Opening short position")
+                self._connector.place_order(self.contract_id, ActionType.SELL, size=1, stop_price=stop_price, is_trail=True)
                 chime.success()

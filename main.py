@@ -20,7 +20,7 @@ from connector import TIME_UNITS, Connector
 from trading.trader import Trader
 from ws import Websocket
 
-from strategies import BaseStrategy, StrategyFactory, StrategyConfig
+from strategies import ActionType, BaseStrategy, StrategyFactory, StrategyConfig
 
 from logger import create_logger
 import logging
@@ -40,11 +40,18 @@ def main(strategy: str, ui: bool, stream: bool, backtest: bool, trade: bool):
     log.info(f"Starting with strategy={strategy}, ui={ui}, stream={stream}, backtest={backtest}, trade={trade}")
 
     con = Connector()
+    # print(con.get_open_positions())
+    # con.close_positions("CON.F.US.EP.H26")
+    # print(con.place_order("CON.F.US.EP.H26", ActionType.SELL, size=1, stop_price=6843.5, is_trail=True))
+    # print(con.get_open_positions())
+    # return
 
     symbol, tf = "ES", [3, TIME_UNITS.Minute]
     contract_id = con.find_contract(symbol)
     config = (contract_id, symbol, tf, strategy, stream)
-    times = ["2025-01-01T00:00:00", "2026-03-01T00:00:00"]
+    # times = ["2026-02-19T00:00:00", "2026-02-20T00:00:00"]
+    times = ["2026-02-27T00:00:00", "2026-02-28T00:00:00"]
+    # times = ["2025-01-01T00:00:00", "2026-03-10T00:00:00"]
 
     ws = Websocket(contract_id, con).run() if stream or trade else None
 
@@ -55,10 +62,9 @@ def main(strategy: str, ui: bool, stream: bool, backtest: bool, trade: bool):
 
         times = [start, end]
     df = con.get_bars(symbol, contract_id, tf=tf, times=times, includePartialBar=stream or trade)
-    print(df.to_csv(header=True, index=False))
 
     if ui or trade:
-        return run_ui(df, ws, config, trade)
+        return run_ui(df, con, ws, config, trade)
 
     if backtest:
         return run_backtest(df, config)
@@ -69,7 +75,7 @@ def run_backtest(df: pd.DataFrame, config: tuple):
 
     params = BACKTESTING_PARAMS
 
-    stra = StrategyFactory.create(strategy, df, StrategyConfig(trading_hours=params.get("trading_hours", [7, 22])))
+    stra = StrategyFactory.create(strategy, df, StrategyConfig(trading_hours=params.get("trading_hours")))
 
     del params["trading_hours"]
 
@@ -113,7 +119,7 @@ def run_backtest(df: pd.DataFrame, config: tuple):
         average_win = wins["Ticks"].mean()
         biggest_loss = losses["Ticks"].min()
         average_loss = losses["Ticks"].mean()
-
+        # cum_win
         res = {
             "params": p,
             "total_ticks": sum_row["Ticks"],
@@ -131,7 +137,7 @@ def run_backtest(df: pd.DataFrame, config: tuple):
 
     df = pd.DataFrame(results)
     df.sort_values(by="win_rate", ascending=False, inplace=True)
-    df.to_csv("_backtest_results.csv", index=False)
+    df.to_csv(f"_backtest_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv", index=False)
 
 
 def build_positions(positions) -> pd.DataFrame:
@@ -142,7 +148,7 @@ def build_positions(positions) -> pd.DataFrame:
     return df
 
 
-def run_ui(df: pd.DataFrame, ws: Websocket, config: tuple, trade: bool):
+def run_ui(df: pd.DataFrame, con: Connector, ws: Websocket, config: tuple, trade: bool):
     (contract_id, symbol, tf, strategy, stream) = config
     title = f"{APP_NAME} - {strategy} - {symbol} - {tf[0]} {tf[1].name} ({LOCAL_TIMEZONE})"
 
@@ -177,7 +183,7 @@ def run_ui(df: pd.DataFrame, ws: Websocket, config: tuple, trade: bool):
 
     if trade:
 
-        trader = Trader()
+        trader = Trader("CON.F.US.EP.H26", con)
 
         def _build_candle(bucket):
             open_ = bucket[0]
@@ -204,13 +210,14 @@ def run_ui(df: pd.DataFrame, ws: Websocket, config: tuple, trade: bool):
                     stra.df.at[last_idx, "low"] = min(partial_candle["low"], low)
                     stra.df.at[last_idx, "close"] = close
                 else:
+                    # /home/rad/Projects/rad/radx/main.py:211: FutureWarning:
+                    # The behavior of DataFrame concatenation with empty or all-pd.NA entries is deprecated. In a future version, this will no longer exclude empty or all-NA columns when determining the result dtypes. To retain the old behavior, exclude the relevant entries before the concat operation.
                     stra.df.loc[len(stra.df)] = {
                         "time": last_ts + time_delta,
                         "open": open_,
                         "high": high,
                         "low": low,
                         "close": close,
-                        # "close": stra.df.iloc[-1]["close"],
                         "trading_allowed": True,
                     }
 

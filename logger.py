@@ -12,7 +12,7 @@ def create_logger(name: str) -> logging.Logger:
         mode="a",
     )
     formatter = logging.Formatter(
-        "%(asctime)s.%(msecs)03d - $(name) %(levelname)s - %(message)s",
+        "%(asctime)s.%(msecs)03d - %(name)s %(levelname)s - %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
     handler.setFormatter(formatter)

@@ -45,11 +45,14 @@ class Connector:
     _token: str = None
     _recent_data: str = None
     _account_id: str = None
-    _recent_contract_id: str = None
 
     def __init__(self):
         self._account_id = os.getenv("TOPSTEP_ACCOUNT_ID")
         self._login()
+        accounts = self.get_accounts()
+        account = next((a for a in accounts if a["id"] == int(self._account_id)), None)
+        if account:
+            log.info(f"Using account >> {account['name']} << with id {account['id']}")
 
     def _store_token(self, token: str):
         with open(".token.json", "w") as outfile:
@@ -61,7 +64,7 @@ class Connector:
                 outfile,
             )
 
-            print("Token saved l=", len(token))
+            log.debug("Token saved l=", len(token))
 
     def _read_token(self):
         try:
@@ -73,10 +76,10 @@ class Connector:
                 diff = datetime.now() - datetime.fromtimestamp(data["ts"])
 
                 if diff > timedelta(hours=23):
-                    print("Token older than 23h, reloading...")
+                    log.debug("Token older than 23h, reloading...")
                     return None
 
-                print(f"Token loaded from {datetime.fromtimestamp(data["ts"])}")
+                log.debug(f"Token loaded from {datetime.fromtimestamp(data["ts"])}")
                 return data["token"]
         except:
             return None
@@ -96,9 +99,9 @@ class Connector:
                 },
             )
 
-            data = res
+            data = res.json()
             if not data["success"]:
-                print("Error", data)
+                log.error("Error", data)
                 return
 
             token = data["token"]
@@ -115,7 +118,7 @@ class Connector:
         self._session.headers = {"Authorization": f"Bearer {token}"}
         self._token = token
 
-        print("Token saved l=", len(token))
+        log.debug("Token saved l=", len(token))
 
     def _post(self, url: str, json: dict = {}):
         api_url = f"{API_URL}/api/{url}"
@@ -144,8 +147,7 @@ class Connector:
         contracts = self.get_contracts(text)
         result = next((c for c in contracts if c["name"].startswith(text)), None)
         if result:
-            self._recent_contract_id = result["id"]
-            return self._recent_contract_id
+            return result["id"]
 
         raise ValueError(f"Contract {text} not found")
 
@@ -166,7 +168,7 @@ class Connector:
 
         def _load():
             if self._recent_data == main_key or os.path.exists(main_csv_name):
-                print("Loading from cache", main_csv_name)
+                log.debug("Loading from cache", main_csv_name)
                 return pd.read_csv(main_csv_name)
 
             current = contractId.split(".")[-1]  # CON.F.US.EP.H26
@@ -187,7 +189,7 @@ class Connector:
                 csv_name = f"_data/{key}.csv"
 
                 if self._recent_data == key or os.path.exists(csv_name):
-                    print("Loading from cache", csv_name)
+                    log.debug("Loading from cache", csv_name)
                     dfs[contract] = pd.read_csv(csv_name)
 
                     continue
@@ -209,7 +211,7 @@ class Connector:
                 bars = data["bars"]
 
                 if len(bars) == 0:
-                    print("No bars returned from API for", contract)
+                    log.info(f"No bars returned from API for {contract}")
                     continue
 
                 df = pd.DataFrame(bars)
@@ -218,7 +220,7 @@ class Connector:
                 if not os.path.exists("_data"):
                     os.mkdir("_data")
 
-                print(f"Fetched {df.shape} for {contract}")
+                log.debug(f"Fetched {df.shape} for {contract}")
 
                 df.to_csv(csv_name, index=False)
 
@@ -254,10 +256,11 @@ class Connector:
 
         if not os.path.exists("_data"):
             os.mkdir("_data")
-        df.to_csv(main_csv_name, index=False)
-        self._recent_data = main_key
 
         df.sort_values(by="time", inplace=True)
+
+        df.to_csv(main_csv_name, index=False)
+        self._recent_data = main_key
 
         # Time index req for vbt plots
         df.set_index(df["time"], inplace=True)
@@ -286,10 +289,18 @@ class Connector:
     # Execution
 
     def close_positions(self, contract_id: str) -> bool:
-        data = self._post("Position/searchOpen", {"accountId": self._account_id, "contractId": contract_id})
+        data = self._post("Position/closeContract", {"accountId": self._account_id, "contractId": contract_id})
+        print(data)
         return data["success"]
 
-    def place_order(self, contract_id: str, side: ActionType, size: int, stopPrice: float, is_trail=True) -> bool:
+    def place_order(self, contract_id: str, side: ActionType, size: int, stop_price: float, is_trail: bool) -> bool:
+        # The order type:
+        # 1 = Limit
+        # 2 = Market
+        # 4 = Stop
+        # 5 = TrailingStop
+        # 6 = JoinBid
+        # 7 = JoinAsk
         data = self._post(
             "Order/place",
             {
@@ -298,8 +309,7 @@ class Connector:
                 "type": 2,  # Market order
                 "side": 0 if side == ActionType.BUY else 1,
                 "size": size,
-                "stopPrice": stopPrice,
-                "isTrail": stopPrice if is_trail else None,
+                "stopLossBracket": {"ticks": 28, "type": 5 if is_trail else 2},  # or 5 for trail
             },
         )
         return data["success"]

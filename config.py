@@ -8,9 +8,8 @@ LIVE_DATA = False
 LOCAL_TIMEZONE = "Europe/Berlin"
 
 
-# Params
 PARAMS = {
-    "stop": 22,  # 33,
+    "stop": 28,  # 22,  # 33,
     "fast_ma": 8,  # 20,
     "slow_ma": 34,  # 55,
     "trading_hours": [0, 22],
